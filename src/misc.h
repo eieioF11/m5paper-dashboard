@@ -1,8 +1,7 @@
 #pragma once
-
+#include <M5EPD.h>
 #include <FastLED.h>
 #include <HTTPClient.h>
-
 #include <ArduinoJson.hpp>
 #include <functional>
 
@@ -15,76 +14,87 @@ inline String WiFiConnectedToString(void) {
 String weekdayToString(const int8_t weekDay) {
 	switch (weekDay) {
 		case 0:
-			return String("日");
+			return String("Sun");
 		case 1:
-			return String("月");
+			return String("Mon");
 		case 2:
-			return String("火");
+			return String("Tue");
 		case 3:
-			return String("水");
+			return String("Wed");
 		case 4:
-			return String("木");
+			return String("Thu");
 		case 5:
-			return String("金");
+			return String("Fri");
 		case 6:
-			return String("土");
+			return String("Sat");
 	}
+	// switch (weekDay) {
+	// 	case 0:
+	// 		return String("日");
+	// 	case 1:
+	// 		return String("月");
+	// 	case 2:
+	// 		return String("火");
+	// 	case 3:
+	// 		return String("水");
+	// 	case 4:
+	// 		return String("木");
+	// 	case 5:
+	// 		return String("金");
+	// 	case 6:
+	// 		return String("土");
+	// }
 	return String("");
 }
 
-uint_fast16_t getCo2Data(void) {
+struct weather_t {
+	String weather;
+	String icon;
+	double temperature;
+	bool success;
+};
+weather_t get_weather(void) {
 	using namespace ArduinoJson;
-	constexpr auto CO2_DATA_URL = "http://192.168.10.103/api/data";
+	weather_t weather_data;
+	weather_data.success = false;
+	if (!WiFi.isConnected()) return weather_data;
 	constexpr uint16_t HTTP_TIMEOUT = 3000;
-
-	if (!WiFi.isConnected()) return 0;
-
-	WiFiClient client;
 	HTTPClient http;
-	if (!http.begin(client, CO2_DATA_URL)) {
-		Serial.printf("[HTTP] Failed to parse url\n");
-		return 0;
-	}
-	http.setTimeout(HTTP_TIMEOUT);
 
-	int httpCode = http.GET();
-	if (httpCode != HTTP_CODE_OK) {
-		Serial.printf("[HTTP] GET... failed, error: %s\n", http.errorToString(httpCode).c_str());
-		http.end();
-		return 0;
-	}
-	StaticJsonDocument<64> filter;
-	filter["co2"]["value"] = true;
+	http.begin(WeatherInfo::API_URL);	 // URLを指定
+	int httpCode = http.GET();	 // GETリクエストを送信
 
-	StaticJsonDocument<64> doc;
-	auto err = deserializeJson(doc, client, DeserializationOption::Filter(filter));
-	http.end();
-	if (err) {
-		Serial.printf("[JSON] DeserializationError, error: %s\n", err.c_str());
-		return 0;
+	if (httpCode > 0) {	 // 返答がある場合
+
+		String payload = http.getString();	// 返答（JSON形式）を取得
+		Serial.println(httpCode);
+		Serial.println(payload);
+
+		// jsonオブジェクトの作成
+		DynamicJsonDocument doc(1024);
+		auto err = deserializeJson(doc, payload);
+		// パースが成功したかどうかを確認
+		if (err) {
+			Serial.printf("[JSON] parseObject() failed, error: %s\n", err.c_str());
+			return weather_data;
+		}
+		// 各データを抜き出し
+		weather_data.weather = doc["weather"][0]["main"].as<String>();
+		weather_data.icon = doc["weather"][0]["icon"].as<String>();
+		weather_data.temperature = doc["main"]["temp"].as<double>() - 273.15;
+		Serial.print("weather:");
+		Serial.println(weather_data.weather);
+		Serial.print("temperature:");
+		Serial.println(weather_data.temperature);
+		weather_data.success = true;
+		return weather_data;
 	}
 
-	return doc["co2"]["value"];
-}
-
-void setLEDColor(std::array<CRGB, 3> &leds, const uint_fast16_t co2) {
-	constexpr uint_fast8_t ID_LED_USE = 1;
-	leds[0] = CRGB::Black;
-	leds[2] = CRGB::Black;
-	if (co2 < 600) {
-		leds[ID_LED_USE] = CRGB::White;
-	} else if (co2 < 1200) {
-		leds[ID_LED_USE] = CRGB::Green;
-	} else if (co2 < 1500) {
-		leds[ID_LED_USE] = CRGB::Yellow;
-	} else if (co2 < 2000) {
-		leds[ID_LED_USE] = CRGB::Red;
-	} else {
-		leds[ID_LED_USE] = CRGB::Red;
-		leds[0] = CRGB::Red;
-		leds[2] = CRGB::Red;
+	else {
+		Serial.println("Error on HTTP request");
 	}
-	FastLED.show();
+	http.end();	 // リソースを解放
+	return weather_data;
 }
 
 inline void prettyEpdRefresh(LGFX &gfx) {

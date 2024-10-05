@@ -43,6 +43,19 @@
         "typeinfo": "cpp",
         "string": "cpp",
         "esp_heap_caps.h": "c",
-        "efuse_reg.h": "c"
+        "efuse_reg.h": "c",
+        "atomic": "cpp",
+        "chrono": "cpp",
+        "condition_variable": "cpp",
+        "iterator": "cpp",
+        "map": "cpp",
+        "memory_resource": "cpp",
+        "optional": "cpp",
+        "random": "cpp",
+        "ratio": "cpp",
+        "string_view": "cpp",
+        "iostream": "cpp",
+        "mutex": "cpp",
+        "thread": "cpp"
     }
 }

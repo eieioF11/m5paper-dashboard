@@ -4,6 +4,8 @@
 #include <M5EPD.h>
 
 #include <array>
+
+#include "SPIFFS.h"
 #define FASTLED_INTERNAL  // suppress pragma message
 #include <FastLED.h>
 
@@ -12,14 +14,17 @@
 
 #define LGFX_M5PAPER
 #define LGFX_USE_V1
-#include <LovyanGFX.hpp>
+#include <ESPmDNS.h>
+
 #include <LGFX_AUTODETECT.hpp>
+#include <LovyanGFX.hpp>
 
 #include "misc.h"
 #include "myFont.h"
-#include <ESPmDNS.h>
 
+constexpr float FONT_SIZE_GIANT = 5.0;
 constexpr float FONT_SIZE_LARGE = 3.0;
+constexpr float FONT_SIZE_MIDDLE = 2.0;
 constexpr float FONT_SIZE_SMALL = 1.0;
 constexpr uint_fast16_t M5PAPER_SIZE_LONG_SIDE = 960;
 constexpr uint_fast16_t M5PAPER_SIZE_SHORT_SIDE = 540;
@@ -27,11 +32,11 @@ constexpr uint_fast16_t M5PAPER_SIZE_SHORT_SIDE = 540;
 rtc_time_t time_ntp;
 rtc_date_t date_ntp{4, 1, 1, 1970};
 
-TwoWire &wire_portA = Wire1;
 SemaphoreHandle_t xMutex = nullptr;
-SHT3X::SHT3X sht30(wire_portA);
+SHT3X::SHT3X sht30;
 static LGFX gfx;
-std::array<CRGB,3> leds;
+std::array<CRGB, 3> leds;
+weather_t weather_data;
 
 inline int syncNTPTimeJP(void) {
 	constexpr auto NTP_SERVER1 = "ntp.nict.jp";
@@ -85,7 +90,7 @@ void handleBtnPPress(void) {
 	delay(1000);
 
 	gfx.setTextSize(FONT_SIZE_LARGE);
-	xSemaphoreGive(xMutex);	
+	xSemaphoreGive(xMutex);
 }
 
 inline void handleBtnRPress(void) {
@@ -105,8 +110,7 @@ void handleBtnLPress(void) {
 	M5.disableEXTPower();
 	M5.disableMainPower();
 	esp_deep_sleep_start();
-	while (true)
-		;
+	while (true);
 	xSemaphoreGive(xMutex);
 }
 
@@ -189,7 +193,7 @@ void setup(void) {
 	ArduinoOTA.begin();
 
 	// env2 unit
-	if (!sht30.begin(25, 32, 400000)) {
+	if (!sht30.begin(21, 22, 400000)) {
 		gfx.println("Failed to initialize external I2C");
 	}
 
@@ -205,26 +209,40 @@ void setup(void) {
 	gfx.setTextSize(FONT_SIZE_LARGE);
 	prettyEpdRefresh(gfx);
 	gfx.setCursor(0, 0);
+	SPIFFS.begin();
 }
+constexpr uint32_t bt_low = 3300;
+constexpr uint32_t bt_high = 4350;
+uint32_t get_battery_percentage(uint32_t ivolt) {
+	uint32_t dmax = bt_high - bt_low;
+	ivolt -= bt_low;
+	return (uint32_t)std::lround(std::min(((float)ivolt / (float)dmax) * 100.0, 100.0));
+}
+void battery_status_show(float bt_per) { gfx.printf("%0d%%", bt_per); }
 
 void loop(void) {
 	constexpr uint_fast16_t SLEEP_SEC = 5;
 	constexpr uint_fast32_t TIME_SYNC_CYCLE = 3600 * 24 / SLEEP_SEC;
+	static uint32_t ink_refresh_time = 0;
 
 	static uint32_t cnt = 0;
+	ink_refresh_time ++;
+	if (ink_refresh_time >= 60*60*1000) {
+		gfx.clear();
+		ink_refresh_time = 0;
+	}
 
 	xSemaphoreTake(xMutex, portMAX_DELAY);
 	ArduinoOTA.handle();
 
 	float tmp = 0.0;
 	uint_fast8_t hum = 0;
-
 	if (!sht30.read()) {
 		tmp = sht30.getTemperature();
 		hum = sht30.getHumidity();
 	}
-	auto co2 = getCo2Data();
-	setLEDColor(leds, co2);
+	// auto co2 = getCo2Data();
+	// setLEDColor(leds, co2);
 
 	rtc_date_t date;
 	rtc_time_t time;
@@ -239,12 +257,26 @@ void loop(void) {
 	constexpr uint_fast16_t offset_x = 45;
 
 	gfx.setCursor(0, offset_y);
+	gfx.setTextSize(FONT_SIZE_GIANT);
 	gfx.setClipRect(offset_x, offset_y, M5PAPER_SIZE_LONG_SIDE - offset_x,
 					M5PAPER_SIZE_SHORT_SIDE - offset_y);
-	gfx.printf("%02d:%02d:%02d\r\n", time.hour, time.min, time.sec);
-	gfx.printf("%04dppm\r\n", co2);
+
+	// gfx.printf("%02d:%02d:%02d\r\n", time.hour, time.min, time.sec);
+	gfx.printf("%02d:%02d\r\n", time.hour, time.min);
+	gfx.setTextSize(FONT_SIZE_SMALL);
+	gfx.setCursor(480, offset_y + 170);
+	gfx.printf("/%02d\r\n", time.sec);
+	gfx.setTextSize(FONT_SIZE_MIDDLE);
+	gfx.setCursor(0, offset_y + 195);
+	weather_t weather = get_weather();
+	if (weather.success) weather_data = weather;
+	gfx.printf("    %s\r\n", weather_data.weather.c_str());
+	gfx.printf("    %02.1f℃\r\n", weather_data.temperature);
+	gfx.drawPngFile(SPIFFS, "/weather_icons/" + weather_data.icon + "@2x.png", 20, offset_y + 180, 0,
+					0, 0, 0, 2.0, 2.0);
+	gfx.printf("%02d%% ", hum);
 	gfx.printf("%02.1f℃\r\n", tmp);
-	gfx.printf("%0d%%", hum);
+	gfx.setTextSize(FONT_SIZE_LARGE);
 	gfx.clearClipRect();
 
 	constexpr float x = 0.61 * M5PAPER_SIZE_LONG_SIDE;
@@ -263,11 +295,9 @@ void loop(void) {
 	gfx.print("WiFi: ");
 	gfx.println(WiFiConnectedToString());
 
-	constexpr uint32_t low = 3300;
-	constexpr uint32_t high = 4350;
-
-	auto vol = std::min(std::max(M5.getBatteryVoltage(), low), high);
-	gfx.printf("BAT : %04dmv\r\n", vol);
+	uint32_t vol = std::min(std::max(M5.getBatteryVoltage(), bt_low), bt_high);
+	uint32_t bt_per = get_battery_percentage(vol);
+	gfx.printf("BAT : %04dmv %03d%%\r\n", vol, bt_per);
 	gfx.print("NTP : ");
 	if (date_ntp.year == 1970) {
 		gfx.print("YET");  // not initialized
