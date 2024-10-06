@@ -32,6 +32,7 @@ constexpr uint_fast16_t M5PAPER_SIZE_LONG_SIDE = 960;
 constexpr uint_fast16_t M5PAPER_SIZE_SHORT_SIDE = 540;
 
 rtc_time_t time_ntp;
+rtc_time_t latest_update_time;
 rtc_date_t date_ntp{4, 1, 1, 1970};
 
 SemaphoreHandle_t xMutex = nullptr;
@@ -175,36 +176,36 @@ void setup(void) {
 		delay(WAIT_ON_FAILURE);
 	}
 
-	ArduinoOTA
-		.onStart([]() {
-			String type;
-			if (ArduinoOTA.getCommand() == U_FLASH)
-				type = "sketch";
-			else  // U_SPIFFS
-				type = "filesystem";
+	// ArduinoOTA
+	// 	.onStart([]() {
+	// 		String type;
+	// 		if (ArduinoOTA.getCommand() == U_FLASH)
+	// 			type = "sketch";
+	// 		else  // U_SPIFFS
+	// 			type = "filesystem";
 
-			// NOTE: if updating SPIFFS this would be the place to unmount SPIFFS using SPIFFS.end()
-			Serial.println("Start updating " + type);
-		})
-		.onEnd([]() { Serial.println("\nEnd"); })
-		.onProgress([](unsigned int progress, unsigned int total) {
-			Serial.printf("Progress: %u%%\r", (progress / (total / 100)));
-		})
-		.onError([](ota_error_t error) {
-			Serial.printf("Error[%u]: ", error);
-			if (error == OTA_AUTH_ERROR)
-				Serial.println("Auth Failed");
-			else if (error == OTA_BEGIN_ERROR)
-				Serial.println("Begin Failed");
-			else if (error == OTA_CONNECT_ERROR)
-				Serial.println("Connect Failed");
-			else if (error == OTA_RECEIVE_ERROR)
-				Serial.println("Receive Failed");
-			else if (error == OTA_END_ERROR)
-				Serial.println("End Failed");
-		});
+	// 		// NOTE: if updating SPIFFS this would be the place to unmount SPIFFS using SPIFFS.end()
+	// 		Serial.println("Start updating " + type);
+	// 	})
+	// 	.onEnd([]() { Serial.println("\nEnd"); })
+	// 	.onProgress([](unsigned int progress, unsigned int total) {
+	// 		Serial.printf("Progress: %u%%\r", (progress / (total / 100)));
+	// 	})
+	// 	.onError([](ota_error_t error) {
+	// 		Serial.printf("Error[%u]: ", error);
+	// 		if (error == OTA_AUTH_ERROR)
+	// 			Serial.println("Auth Failed");
+	// 		else if (error == OTA_BEGIN_ERROR)
+	// 			Serial.println("Begin Failed");
+	// 		else if (error == OTA_CONNECT_ERROR)
+	// 			Serial.println("Connect Failed");
+	// 		else if (error == OTA_RECEIVE_ERROR)
+	// 			Serial.println("Receive Failed");
+	// 		else if (error == OTA_END_ERROR)
+	// 			Serial.println("End Failed");
+	// 	});
 
-	ArduinoOTA.begin();
+	// ArduinoOTA.begin();
 
 	// env2 unit
 	if (!sht30.begin(21, 22, 400000)) {
@@ -226,6 +227,9 @@ void setup(void) {
 	SPIFFS.begin();
 	// update
 	syncNTPTimeJP();
+	rtc_time_t time;
+	M5.RTC.getTime(&time);
+	latest_update_time = time;
 	weather_t weather = get_weather();
 	if (weather.success) weather_data = weather;
 	delay(1000);
@@ -264,7 +268,7 @@ void loop(void) {
 	}
 
 	xSemaphoreTake(xMutex, portMAX_DELAY);
-	ArduinoOTA.handle();
+	// ArduinoOTA.handle();
 
 	float tmp = 0.0;
 	uint_fast8_t hum = 0;
@@ -301,10 +305,14 @@ void loop(void) {
 	gfx.setCursor(0, offset_y + 195);
 	gfx.printf("    %s\r\n", weather_data.weather.c_str());
 	gfx.printf("    %02.1f℃\r\n", weather_data.temperature);
+	gfx.setTextSize(FONT_SIZE_SMALL);
+	gfx.printf("\r\n");
 	gfx.drawPngFile(SPIFFS, "/weather_icons/" + weather_data.icon + "@2x.png", 20, offset_y + 180,
 					0, 0, 0, 0, 2.0, 2.0);
-	gfx.printf("%02d%% ", hum);
-	gfx.printf("%02.1f℃\r\n", tmp);
+	gfx.setTextSize(FONT_SIZE_MIDDLE);
+	gfx.printf("%02d%% %02.1f℃\r\n",hum, tmp);
+	gfx.setTextSize(FONT_SIZE_SMALL);
+	gfx.printf("latest update : %02d:%02d\r\n", latest_update_time.hour, latest_update_time.min);
 	gfx.setTextSize(FONT_SIZE_LARGE);
 	gfx.clearClipRect();
 
@@ -346,6 +354,7 @@ void loop(void) {
 		update = true;
 	}
 	if (update) {
+		latest_update_time = time;
 		delay(1000);
 		WiFi.mode(WIFI_OFF);
 	}
