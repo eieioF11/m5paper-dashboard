@@ -22,6 +22,8 @@
 #include "misc.h"
 #include "myFont.h"
 
+#define M5EPD_TOUCH_INT 36
+
 constexpr float FONT_SIZE_GIANT = 5.0;
 constexpr float FONT_SIZE_LARGE = 3.0;
 constexpr float FONT_SIZE_MIDDLE = 2.0;
@@ -51,7 +53,9 @@ inline int syncNTPTimeJP(void) {
 			static_cast<int8_t>(datetime.tm_wday), static_cast<int8_t>(datetime.tm_mon + 1),
 			static_cast<int8_t>(datetime.tm_mday), static_cast<int16_t>(datetime.tm_year + 1900)};
 
-		M5.RTC.setDateTime(date, time);
+		M5.RTC.setTime(&time);
+		M5.RTC.setDate(&date);
+		// M5.RTC.setDateTime(date, time);
 		date_ntp = date;
 		time_ntp = time;
 	};
@@ -81,7 +85,10 @@ void handleBtnPPress(void) {
 	rtc_time_t time;
 
 	// Get RTC
-	M5.RTC.getDateTime(date, time);
+	// M5.RTC.getDateTime(date, time);
+	M5.RTC.getTime(&time);
+	M5.RTC.getDate(&date);
+
 	gfx.print("RTC         :");
 	gfx.printf("%04d/%02d/%02d ", date.year, date.mon, date.day);
 	gfx.printf("%02d:%02d:%02d", time.hour, time.min, time.sec);
@@ -128,12 +135,22 @@ void handleButton(void *pvParameters) {
 	}
 }
 
-void setup(void) {
+void wifi_connecting(void) {
 	constexpr uint_fast16_t WIFI_CONNECT_RETRY_MAX = 60;  // 10 = 5s
+	WiFi.begin(WiFiInfo::SSID, WiFiInfo::PASS);
+	for (int cnt_retry = 0; cnt_retry < WIFI_CONNECT_RETRY_MAX && !WiFi.isConnected();
+		 cnt_retry++) {
+		delay(500);
+		gfx.print(".");
+	}
+}
+
+void setup(void) {
 	constexpr uint_fast16_t WAIT_ON_FAILURE = 2000;
 
-	M5.begin(true, false, true, true, true, true);
-	WiFi.begin(WiFiInfo::SSID, WiFiInfo::PASS);
+	M5.begin(true, false, true, true, true);
+	// M5.begin(true, false, true, true, true, true);
+	// WiFi.begin(WiFiInfo::SSID, WiFiInfo::PASS);
 
 	FastLED.addLeds<WS2811, 26, GRB>(leds.data(), 3).setCorrection(TypicalSMD5050);
 	FastLED.setBrightness(5);
@@ -141,16 +158,13 @@ void setup(void) {
 	gfx.init();
 	gfx.setEpdMode(epd_mode_t::epd_fast);
 	gfx.setRotation(1);
+	M5.TP.SetRotation(1);
 	// gfx.setFont(&fonts::lgfxJapanGothic_40);
 	gfx.setFont(&myFont::myFont);
 	gfx.setTextSize(FONT_SIZE_SMALL);
 
 	gfx.print("Connecting to Wi-Fi network");
-	for (int cnt_retry = 0; cnt_retry < WIFI_CONNECT_RETRY_MAX && !WiFi.isConnected();
-		 cnt_retry++) {
-		delay(500);
-		gfx.print(".");
-	}
+	wifi_connecting();
 	gfx.println("");
 	if (WiFi.isConnected()) {
 		gfx.print("Local IP: ");
@@ -210,6 +224,12 @@ void setup(void) {
 	prettyEpdRefresh(gfx);
 	gfx.setCursor(0, 0);
 	SPIFFS.begin();
+	// update
+	syncNTPTimeJP();
+	weather_t weather = get_weather();
+	if (weather.success) weather_data = weather;
+	delay(1000);
+	WiFi.mode(WIFI_OFF);
 }
 constexpr uint32_t bt_low = 3300;
 constexpr uint32_t bt_high = 4350;
@@ -223,13 +243,24 @@ void battery_status_show(float bt_per) { gfx.printf("%0d%%", bt_per); }
 void loop(void) {
 	constexpr uint_fast16_t SLEEP_SEC = 5;
 	constexpr uint_fast32_t TIME_SYNC_CYCLE = 3600 * 24 / SLEEP_SEC;
-	static uint32_t ink_refresh_time = 0;
-
+	constexpr uint_fast32_t UPDATE_SYNC_CYCLE = 3600 * 1 / SLEEP_SEC;
+	static uint32_t update_cnt = 0;
 	static uint32_t cnt = 0;
-	ink_refresh_time ++;
-	if (ink_refresh_time >= 60*60*1000) {
+	bool update = false;
+	update_cnt++;
+	// if (M5.TP.available()) {
+	// 	if (!M5.TP.isFingerUp()) {
+	// 		Serial.println("touch");
+	// 		// touch = true;
+	// 	}
+	// }
+	if (update_cnt >= UPDATE_SYNC_CYCLE) {
+		wifi_connecting();
 		gfx.clear();
-		ink_refresh_time = 0;
+		weather_t weather = get_weather();
+		if (weather.success) weather_data = weather;
+		update_cnt = 0;
+		update = true;
 	}
 
 	xSemaphoreTake(xMutex, portMAX_DELAY);
@@ -241,13 +272,13 @@ void loop(void) {
 		tmp = sht30.getTemperature();
 		hum = sht30.getHumidity();
 	}
-	// auto co2 = getCo2Data();
-	// setLEDColor(leds, co2);
 
 	rtc_date_t date;
 	rtc_time_t time;
 
-	M5.RTC.getDateTime(date, time);
+	// M5.RTC.getDateTime(date, time);
+	M5.RTC.getTime(&time);
+	M5.RTC.getDate(&date);
 
 	gfx.startWrite();
 	gfx.fillScreen(TFT_WHITE);
@@ -268,12 +299,10 @@ void loop(void) {
 	gfx.printf("/%02d\r\n", time.sec);
 	gfx.setTextSize(FONT_SIZE_MIDDLE);
 	gfx.setCursor(0, offset_y + 195);
-	weather_t weather = get_weather();
-	if (weather.success) weather_data = weather;
 	gfx.printf("    %s\r\n", weather_data.weather.c_str());
 	gfx.printf("    %02.1f℃\r\n", weather_data.temperature);
-	gfx.drawPngFile(SPIFFS, "/weather_icons/" + weather_data.icon + "@2x.png", 20, offset_y + 180, 0,
-					0, 0, 0, 2.0, 2.0);
+	gfx.drawPngFile(SPIFFS, "/weather_icons/" + weather_data.icon + "@2x.png", 20, offset_y + 180,
+					0, 0, 0, 0, 2.0, 2.0);
 	gfx.printf("%02d%% ", hum);
 	gfx.printf("%02.1f℃\r\n", tmp);
 	gfx.setTextSize(FONT_SIZE_LARGE);
@@ -311,9 +340,20 @@ void loop(void) {
 
 	cnt++;
 	if (cnt == TIME_SYNC_CYCLE) {
+		wifi_connecting();
 		syncNTPTimeJP();
 		cnt = 0;
+		update = true;
+	}
+	if (update) {
+		delay(1000);
+		WiFi.mode(WIFI_OFF);
 	}
 	xSemaphoreGive(xMutex);
-	delay(SLEEP_SEC * 1000);
+	// delay(SLEEP_SEC * 1000);
+	Serial.flush();	 // Serialをflushさせておく
+	esp_sleep_enable_timer_wakeup(SLEEP_SEC * 1000000);
+	// esp_sleep_enable_ext0_wakeup(GPIO_NUM_36,
+	// 							 LOW);	// タッチで GPIO36 が LOW になるのでこの時も起床
+	esp_light_sleep_start();  // ライトスリープ開始
 }
