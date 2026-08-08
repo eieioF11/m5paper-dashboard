@@ -47,7 +47,7 @@ inline int syncNTPTimeJP(void) {
 	constexpr auto NTP_SERVER3 = "time.google.com";
 	constexpr auto TIME_ZONE = "JST-9";
 
-	auto datetime_setter = [](const tm &datetime) {
+	auto datetime_setter = [](const tm& datetime) {
 		rtc_time_t time{static_cast<int8_t>(datetime.tm_hour), static_cast<int8_t>(datetime.tm_min),
 						static_cast<int8_t>(datetime.tm_sec)};
 		rtc_date_t date{
@@ -122,7 +122,7 @@ void handleBtnLPress(void) {
 	xSemaphoreGive(xMutex);
 }
 
-void handleButton(void *pvParameters) {
+void handleButton(void* pvParameters) {
 	while (true) {
 		delay(500);
 		M5.update();
@@ -242,10 +242,71 @@ uint32_t get_battery_percentage(uint32_t ivolt) {
 	ivolt -= bt_low;
 	return (uint32_t)std::lround(std::min(((float)ivolt / (float)dmax) * 100.0, 100.0));
 }
-void battery_status_show(float bt_per) { gfx.printf("%0d%%", bt_per); }
+
+// 右上にバッテリーを表示する関数（大型化・背景：白仕様）
+void drawBattery(LGFX& gfx, int percentage) {
+	if (percentage < 0) percentage = 0;
+	if (percentage > 100) percentage = 100;
+
+	// --- パーツのサイズ定義（大きく修正） ---
+	const int32_t iconWidth = 60;	// アイコン本体の幅
+	const int32_t iconHeight = 30;	// アイコン本体の高さ
+	const int32_t capWidth = 6;		// 突起の幅
+	const int32_t border = 3;		// 枠線の太さ
+
+	// 右上からのマージン（余白）
+	const int32_t marginX = 0;
+	const int32_t marginY = 10;
+
+	// フォントサイズ設定（大きく）
+	const float batteryFontSize = FONT_SIZE_SMALL;
+
+	// 全体幅（アイコン + 突起 + 隙間8px + テキスト幅）
+	const int32_t totalWidth = iconWidth + capWidth + 8;
+
+	// 描画開始座標（右上基準）
+	int32_t x = M5PAPER_SIZE_LONG_SIDE - totalWidth - marginX;
+	int32_t y = marginY;
+
+	// 1. 背景クリア（白で背景をリセット、文字エリアまで含めて広めにクリア）
+	gfx.fillRect(x - 5, y - 5, totalWidth + 10, iconHeight + 10, TFT_WHITE);
+
+	// 2. 外枠と突起（黒描画）
+	gfx.drawRect(x, y, iconWidth, iconHeight, TFT_BLACK);  // 外枠
+	// 線の太さを出すために内側にもう一枚描画
+	gfx.drawRect(x + 1, y + 1, iconWidth - 2, iconHeight - 2, TFT_BLACK);
+
+	// プラス極突起（本体高さの中央に配置）
+	gfx.fillRect(x + iconWidth, y + (iconHeight / 4), capWidth, iconHeight / 2, TFT_BLACK);
+
+	// 3. 残量バー（黒描画）
+	// 枠線の太さを考慮した内側の描画エリア
+	int32_t innerMargin = border + 1;
+	int32_t maxInnerWidth = iconWidth - (innerMargin * 2);
+	int32_t innerHeight = iconHeight - (innerMargin * 2);
+
+	// 残量に応じた幅計算
+	int32_t barWidth = (maxInnerWidth * percentage) / 100;
+
+	// 1%以上なら最低2px表示して視認性を確保
+	if (percentage > 0 && barWidth < 2) barWidth = 2;
+
+	gfx.fillRect(x + innerMargin, y + innerMargin, barWidth, innerHeight, TFT_BLACK);
+
+	// 4. パーセンテージ文字表示（文字色:黒, 背景色:白、大型フォント）
+	gfx.setTextSize(batteryFontSize);
+	gfx.setTextColor(TFT_BLACK, TFT_WHITE);
+
+	// アイコンの右側に、高さの中央を合わせて配置
+	gfx.setCursor(x-10, y+iconHeight);
+	// int32_t textY = y + (iconHeight / 2) - (gfx.fontHeight(batteryFontSize) / 2);
+	// gfx.setCursor(x + iconWidth + capWidth + 8, textY);
+
+	gfx.printf("%3d%%", percentage);
+}
 
 void loop(void) {
-	constexpr uint_fast16_t SLEEP_SEC = 5;
+	constexpr uint_fast16_t SLEEP_SEC = 60;
 	constexpr uint_fast32_t TIME_SYNC_CYCLE = 3600 * 24 / SLEEP_SEC;
 	constexpr uint_fast32_t UPDATE_SYNC_CYCLE = 3600 * 1 / SLEEP_SEC;
 	static uint32_t update_cnt = 0;
@@ -298,9 +359,9 @@ void loop(void) {
 
 	// gfx.printf("%02d:%02d:%02d\r\n", time.hour, time.min, time.sec);
 	gfx.printf("%02d:%02d\r\n", time.hour, time.min);
-	gfx.setTextSize(FONT_SIZE_SMALL);
-	gfx.setCursor(480, offset_y + 170);
-	gfx.printf("/%02d\r\n", time.sec);
+	// gfx.setTextSize(FONT_SIZE_SMALL);
+	// gfx.setCursor(480, offset_y + 170);
+	// gfx.printf("/%02d\r\n", time.sec);
 	gfx.setTextSize(FONT_SIZE_MIDDLE);
 	gfx.setCursor(0, offset_y + 195);
 	gfx.printf("    %s\r\n", weather_data.weather.c_str());
@@ -310,13 +371,18 @@ void loop(void) {
 	gfx.drawPngFile(SPIFFS, "/weather_icons/" + weather_data.icon + "@2x.png", 20, offset_y + 180,
 					0, 0, 0, 0, 2.0, 2.0);
 	gfx.setTextSize(FONT_SIZE_MIDDLE);
-	gfx.printf("%02d%% %02.1f℃\r\n",hum, tmp);
+	gfx.printf("%02d%% %02.1f℃\r\n", hum, tmp);
 	gfx.setTextSize(FONT_SIZE_SMALL);
 	gfx.printf("latest update : %02d:%02d\r\n", latest_update_time.hour, latest_update_time.min);
 	gfx.setTextSize(FONT_SIZE_LARGE);
 	gfx.clearClipRect();
 
+	uint32_t vol = std::min(std::max(M5.getBatteryVoltage(), bt_low), bt_high);
+	uint32_t bt_per = get_battery_percentage(vol);
+	drawBattery(gfx, bt_per);
+
 	constexpr float x = 0.61 * M5PAPER_SIZE_LONG_SIDE;
+	gfx.setTextSize(FONT_SIZE_LARGE);
 	gfx.setCursor(0, offset_y);
 	gfx.setClipRect(x, offset_y, M5PAPER_SIZE_LONG_SIDE - offset_x - x,
 					M5PAPER_SIZE_SHORT_SIDE - offset_y);
@@ -332,16 +398,14 @@ void loop(void) {
 	gfx.print("WiFi: ");
 	gfx.println(WiFiConnectedToString());
 
-	uint32_t vol = std::min(std::max(M5.getBatteryVoltage(), bt_low), bt_high);
-	uint32_t bt_per = get_battery_percentage(vol);
-	gfx.printf("BAT : %04dmv %03d%%\r\n", vol, bt_per);
+	gfx.printf("BAT : %04dmv\r\n", vol);
+	// gfx.printf("BAT : %04dmv %03d%%\r\n", vol, bt_per);
 	gfx.print("NTP : ");
 	if (date_ntp.year == 1970) {
 		gfx.print("YET");  // not initialized
 	} else {
 		gfx.printf("%02d/%02d %02d:%02d", date_ntp.mon, date_ntp.day, time_ntp.hour, time_ntp.min);
 	}
-
 	gfx.clearClipRect();
 	gfx.setTextSize(FONT_SIZE_LARGE);
 	gfx.endWrite();
