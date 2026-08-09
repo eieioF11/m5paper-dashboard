@@ -1,7 +1,8 @@
 #pragma once
 #include <M5EPD.h>
-#include <FastLED.h>
+// #include <FastLED.h>
 #include <HTTPClient.h>
+
 #include <ArduinoJson.hpp>
 #include <functional>
 
@@ -61,8 +62,8 @@ weather_t get_weather(void) {
 	constexpr uint16_t HTTP_TIMEOUT = 3000;
 	HTTPClient http;
 
-	http.begin(WeatherInfo::API_URL);	 // URLを指定
-	int httpCode = http.GET();	 // GETリクエストを送信
+	http.begin(WeatherInfo::API_URL);  // URLを指定
+	int httpCode = http.GET();		   // GETリクエストを送信
 
 	if (httpCode > 0) {	 // 返答がある場合
 
@@ -71,7 +72,8 @@ weather_t get_weather(void) {
 		Serial.println(payload);
 
 		// jsonオブジェクトの作成
-		DynamicJsonDocument doc(1024);
+		// DynamicJsonDocument doc(1024);
+		JsonDocument doc;
 		auto err = deserializeJson(doc, payload);
 		// パースが成功したかどうかを確認
 		if (err) {
@@ -97,14 +99,14 @@ weather_t get_weather(void) {
 	return weather_data;
 }
 
-inline void prettyEpdRefresh(LGFX &gfx) {
+inline void prettyEpdRefresh(LGFX& gfx) {
 	gfx.setEpdMode(epd_mode_t::epd_quality);
 	gfx.fillScreen(TFT_WHITE);
 	gfx.setEpdMode(epd_mode_t::epd_fast);
 }
 
-int syncNTPTime(std::function<void(const tm &)> datetimeSetter, const char *tz, const char *server1,
-				const char *server2 = nullptr, const char *server3 = nullptr) {
+int syncNTPTime(std::function<void(const tm&)> datetimeSetter, const char* tz, const char* server1,
+				const char* server2 = nullptr, const char* server3 = nullptr) {
 	if (!WiFi.isConnected()) {
 		return 1;
 	}
