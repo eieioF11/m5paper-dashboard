@@ -1,51 +1,38 @@
-#undef ARDUINO_M5STACK_FIRE
-#define ARDUINO_M5STACK_Paper
-#include <M5EPD.h>
+#include "SPIFFS.h"
 
+#include <M5Unified.h>
 #include <array>
 
 #include "SHT3X.h"
-#include "SPIFFS.h"
 #include "WiFiInfo.h"
-
-#define LGFX_M5PAPER
-#define LGFX_USE_V1
-#include <LGFX_AUTODETECT.hpp>
-#include <LovyanGFX.hpp>
-
 #include "misc.h"
-#include "myFont.h"
 
-constexpr float FONT_SIZE_GIANT = 5.0;
-constexpr float FONT_SIZE_LARGE = 3.0;
-constexpr float FONT_SIZE_MIDDLE = 2.0;
-constexpr float FONT_SIZE_SMALL = 1.0;
+constexpr float FONT_SIZE_GIANT = 17.0;
+constexpr float FONT_SIZE_LARGE = 10.0;
+constexpr float FONT_SIZE_MIDDLE = 8.0;
+constexpr float FONT_SIZE_SMALL = 4.0;
 constexpr uint_fast16_t M5PAPER_SIZE_LONG_SIDE = 960;
 constexpr uint_fast16_t M5PAPER_SIZE_SHORT_SIDE = 540;
 
-// --- Deep Sleep 復帰時にリセットされないように、すべて「純粋な数値型(プリミティブ)」で宣言 ---
+// RTC/Deep Sleep変数
 RTC_DATA_ATTR uint32_t update_cnt = 0;
 RTC_DATA_ATTR uint32_t cnt = 0;
 
-// 最後に通信したNTP時刻用
 RTC_DATA_ATTR int16_t rtc_ntp_year = 1970;
 RTC_DATA_ATTR int8_t rtc_ntp_mon = 1;
 RTC_DATA_ATTR int8_t rtc_ntp_day = 1;
 RTC_DATA_ATTR int8_t rtc_ntp_hour = 0;
 RTC_DATA_ATTR int8_t rtc_ntp_min = 0;
 
-// last update用
-RTC_DATA_ATTR int8_t rtc_latest_update_hour = -1;  // -1は未更新の印
+RTC_DATA_ATTR int8_t rtc_latest_update_hour = -1;
 RTC_DATA_ATTR int8_t rtc_latest_update_min = -1;
 
-// 天気データ用
 RTC_DATA_ATTR bool rtc_weather_success = false;
 RTC_DATA_ATTR char rtc_weather_text[64] = "";
 RTC_DATA_ATTR char rtc_weather_icon[32] = "";
 RTC_DATA_ATTR float rtc_weather_temp = 0.0;
 
 SHT3X::SHT3X sht30;
-static LGFX gfx;
 
 constexpr uint32_t bt_low = 3300;
 constexpr uint32_t bt_high = 4350;
@@ -64,21 +51,23 @@ inline int syncNTPTimeJP(void) {
 	constexpr auto TIME_ZONE = "JST-9";
 
 	auto datetime_setter = [](const tm& datetime) {
-		rtc_time_t time{static_cast<int8_t>(datetime.tm_hour), static_cast<int8_t>(datetime.tm_min),
-						static_cast<int8_t>(datetime.tm_sec)};
-		rtc_date_t date{
-			static_cast<int8_t>(datetime.tm_wday), static_cast<int8_t>(datetime.tm_mon + 1),
-			static_cast<int8_t>(datetime.tm_mday), static_cast<int16_t>(datetime.tm_year + 1900)};
+		m5::rtc_time_t time{static_cast<int8_t>(datetime.tm_hour),
+							static_cast<int8_t>(datetime.tm_min),
+							static_cast<int8_t>(datetime.tm_sec)};
 
-		M5.RTC.setTime(&time);
-		M5.RTC.setDate(&date);
+		// 順序を {year, month, date, weekDay} に修正
+		m5::rtc_date_t date{
+			static_cast<int16_t>(datetime.tm_year + 1900), static_cast<int8_t>(datetime.tm_mon + 1),
+			static_cast<int8_t>(datetime.tm_mday), static_cast<int8_t>(datetime.tm_wday)};
 
-		// バグ防止：NTP取得時刻を純粋な数値としてRTCメモリに保存
+		M5.Rtc.setTime(time);
+		M5.Rtc.setDate(date);
+
 		rtc_ntp_year = date.year;
-		rtc_ntp_mon = date.mon;
-		rtc_ntp_day = date.day;
-		rtc_ntp_hour = time.hour;
-		rtc_ntp_min = time.min;
+		rtc_ntp_mon = date.month;
+		rtc_ntp_day = date.date;
+		rtc_ntp_hour = time.hours;
+		rtc_ntp_min = time.minutes;
 	};
 
 	return syncNTPTime(datetime_setter, TIME_ZONE, NTP_SERVER1, NTP_SERVER2, NTP_SERVER3);
@@ -104,7 +93,7 @@ void updateWeatherToRTC() {
 	}
 }
 
-void drawBattery(LGFX& gfx, int percentage) {
+void drawBattery(int percentage) {
 	if (percentage < 0) percentage = 0;
 	if (percentage > 100) percentage = 100;
 
@@ -120,10 +109,10 @@ void drawBattery(LGFX& gfx, int percentage) {
 	int32_t x = M5PAPER_SIZE_LONG_SIDE - totalWidth - marginX;
 	int32_t y = marginY;
 
-	gfx.fillRect(x - 5, y - 5, totalWidth + 10, iconHeight + 35, TFT_WHITE);
-	gfx.drawRect(x, y, iconWidth, iconHeight, TFT_BLACK);
-	gfx.drawRect(x + 1, y + 1, iconWidth - 2, iconHeight - 2, TFT_BLACK);
-	gfx.fillRect(x + iconWidth, y + (iconHeight / 4), capWidth, iconHeight / 2, TFT_BLACK);
+	M5.Display.fillRect(x - 5, y - 5, totalWidth + 10, iconHeight + 35, TFT_WHITE);
+	M5.Display.drawRect(x, y, iconWidth, iconHeight, TFT_BLACK);
+	M5.Display.drawRect(x + 1, y + 1, iconWidth - 2, iconHeight - 2, TFT_BLACK);
+	M5.Display.fillRect(x + iconWidth, y + (iconHeight / 4), capWidth, iconHeight / 2, TFT_BLACK);
 
 	int32_t innerMargin = border + 1;
 	int32_t maxInnerWidth = iconWidth - (innerMargin * 2);
@@ -131,12 +120,12 @@ void drawBattery(LGFX& gfx, int percentage) {
 	int32_t barWidth = (maxInnerWidth * percentage) / 100;
 
 	if (percentage > 0 && barWidth < 2) barWidth = 2;
-	gfx.fillRect(x + innerMargin, y + innerMargin, barWidth, innerHeight, TFT_BLACK);
+	M5.Display.fillRect(x + innerMargin, y + innerMargin, barWidth, innerHeight, TFT_BLACK);
 
-	gfx.setTextSize(FONT_SIZE_SMALL);
-	gfx.setTextColor(TFT_BLACK, TFT_WHITE);
-	gfx.setCursor(x - 10, y + iconHeight + 2);
-	gfx.printf("%3d%%", percentage);
+	M5.Display.setTextSize(FONT_SIZE_SMALL);
+	M5.Display.setTextColor(TFT_BLACK, TFT_WHITE);
+	M5.Display.setCursor(x - 10, y + iconHeight + 2);
+	M5.Display.printf("%3d%%", percentage);
 }
 
 void setup(void) {
@@ -145,27 +134,27 @@ void setup(void) {
 	constexpr uint_fast32_t UPDATE_SYNC_CYCLE = (3600 * 12) / SLEEP_SEC;
 	bool did_update_wifi = false;
 
-	M5.begin(true, false, true, true, true);
+	auto cfg = M5.config();
+	M5.begin(cfg);
 	setCpuFrequencyMhz(80);
 
-	gfx.init();
-	gfx.setEpdMode(epd_mode_t::epd_fast);
-	gfx.setRotation(1);
-	gfx.setFont(&myFont::myFont);
+	M5.Display.setEpdMode(m5gfx::epd_mode_t::epd_fast);
+	M5.Display.setRotation(1);
+	// M5.Display.setFont(&myFont::myFont);
+
 	SPIFFS.begin();
 	sht30.begin(21, 22, 400000);
 
 	esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
 
-	gfx.startWrite();
-	gfx.fillScreen(TFT_WHITE);
-	uint32_t vol = std::min(std::max(M5.getBatteryVoltage(), bt_low), bt_high);
+	M5.Display.startWrite();
+	M5.Display.fillScreen(TFT_WHITE);
+	uint32_t vol = std::min(std::max((uint32_t)M5.Power.getBatteryVoltage(), bt_low), bt_high);
 	uint32_t bt_per = get_battery_percentage(vol);
-	drawBattery(gfx, bt_per);
-	gfx.endWrite();
-	gfx.waitDisplay();
+	drawBattery(bt_per);
+	M5.Display.endWrite();
+	M5.Display.waitDisplay();
 
-	// 初回起動時処理
 	if (wakeup_reason != ESP_SLEEP_WAKEUP_TIMER) {
 		if (wifi_connecting()) {
 			syncNTPTimeJP();
@@ -177,7 +166,6 @@ void setup(void) {
 	update_cnt++;
 	cnt++;
 
-	// 定期天気更新
 	if (update_cnt >= UPDATE_SYNC_CYCLE && !did_update_wifi) {
 		if (wifi_connecting()) {
 			updateWeatherToRTC();
@@ -186,7 +174,6 @@ void setup(void) {
 		update_cnt = 0;
 	}
 
-	// 定期NTP同期
 	if (cnt >= TIME_SYNC_CYCLE && !did_update_wifi) {
 		if (wifi_connecting()) {
 			syncNTPTimeJP();
@@ -205,102 +192,97 @@ void setup(void) {
 		hum = sht30.getHumidity();
 	}
 
-	rtc_date_t date;
-	rtc_time_t time;
-	M5.RTC.getTime(&time);
-	M5.RTC.getDate(&date);
+	auto rtc_dt = M5.Rtc.getDateTime();
 
-	// Wi-Fi通信に成功した時のみ、取得した時間を数値としてRTCメモリに保存
 	if (did_update_wifi) {
-		rtc_latest_update_hour = time.hour;
-		rtc_latest_update_min = time.min;
+		rtc_latest_update_hour = rtc_dt.time.hours;
+		rtc_latest_update_min = rtc_dt.time.minutes;
 	}
 
-	gfx.startWrite();
-	gfx.fillScreen(TFT_WHITE);
-	gfx.fillRect(0.57 * M5PAPER_SIZE_LONG_SIDE, 0, 3, M5PAPER_SIZE_SHORT_SIDE, TFT_BLACK);
+	M5.Display.startWrite();
+	M5.Display.fillScreen(TFT_WHITE);
+	M5.Display.fillRect(0.57 * M5PAPER_SIZE_LONG_SIDE, 0, 3, M5PAPER_SIZE_SHORT_SIDE, TFT_BLACK);
 
 	constexpr uint_fast16_t offset_y = 30;
-	constexpr uint_fast16_t offset_x = 45;
+	constexpr uint_fast16_t offset_x = 20;//45;
 
-	gfx.setCursor(0, offset_y);
-	gfx.setTextSize(FONT_SIZE_GIANT);
-	gfx.setClipRect(offset_x, offset_y, M5PAPER_SIZE_LONG_SIDE - offset_x,
-					M5PAPER_SIZE_SHORT_SIDE - offset_y);
+	M5.Display.setCursor(0, offset_y);
+	M5.Display.setTextSize(FONT_SIZE_GIANT);
+	M5.Display.setClipRect(offset_x, offset_y, M5PAPER_SIZE_LONG_SIDE - offset_x,
+						   M5PAPER_SIZE_SHORT_SIDE - offset_y);
 
-	gfx.printf("%02d:%02d\r\n", time.hour, time.min);
-	gfx.setTextSize(FONT_SIZE_MIDDLE);
-	gfx.setCursor(0, offset_y + 195);
+	M5.Display.printf("%02d:%02d\r\n", rtc_dt.time.hours, rtc_dt.time.minutes);
+	M5.Display.setTextSize(FONT_SIZE_MIDDLE);
+	M5.Display.setCursor(0, offset_y + 195);
 
-	gfx.printf("    %s\r\n", rtc_weather_text);
-	gfx.printf("    %02.1f℃\r\n", rtc_weather_temp);
-	gfx.setTextSize(FONT_SIZE_SMALL);
-	gfx.printf("\r\n");
+	M5.Display.printf("    %s\r\n", rtc_weather_text);
+	M5.Display.printf("    %02.1f℃\r\n", rtc_weather_temp);
+	M5.Display.setTextSize(FONT_SIZE_SMALL);
+	M5.Display.printf("\r\n");
 
 	if (rtc_weather_success && strlen(rtc_weather_icon) > 0) {
 		String icon_path = String("/weather_icons/") + rtc_weather_icon + "@2x.png";
-		gfx.drawPngFile(SPIFFS, icon_path.c_str(), 20, offset_y + 180, 0, 0, 0, 0, 2.0, 2.0);
+		// キャストなしで SPIFFS をそのまま渡す
+		M5.Display.drawPngFile(SPIFFS, icon_path.c_str(), 20, offset_y + 180, 0, 0, 0, 0, 2.0, 2.0);
 	}
 
-	gfx.setTextSize(FONT_SIZE_MIDDLE);
-	gfx.printf("%02d%% %02.1f℃\r\n", hum, tmp);
-	gfx.setTextSize(FONT_SIZE_SMALL);
+	M5.Display.setTextSize(FONT_SIZE_MIDDLE);
+	M5.Display.printf("%02d%% %02.1f℃\r\n", hum, tmp);
+	M5.Display.setTextSize(FONT_SIZE_SMALL);
 
-	// バグ防止：保存された「数値」を使って表示する
 	if (rtc_latest_update_hour != -1) {
-		gfx.printf("latest update : %02d:%02d\r\n", rtc_latest_update_hour, rtc_latest_update_min);
+		M5.Display.printf("latest update : %02d:%02d\r\n", rtc_latest_update_hour,
+						  rtc_latest_update_min);
 	} else {
-		gfx.printf("latest update : --:--\r\n");
+		M5.Display.printf("latest update : --:--\r\n");
 	}
 
-	gfx.clearClipRect();
+	M5.Display.clearClipRect();
 
-	vol = std::min(std::max(M5.getBatteryVoltage(), bt_low), bt_high);
+	vol = std::min(std::max((uint32_t)M5.Power.getBatteryVoltage(), bt_low), bt_high);
 	bt_per = get_battery_percentage(vol);
-	drawBattery(gfx, bt_per);
+	drawBattery(bt_per);
 
 	constexpr float x = 0.61 * M5PAPER_SIZE_LONG_SIDE;
-	gfx.setTextSize(FONT_SIZE_LARGE);
-	gfx.setCursor(0, offset_y);
-	gfx.setClipRect(x, offset_y, M5PAPER_SIZE_LONG_SIDE - offset_x - x,
-					M5PAPER_SIZE_SHORT_SIDE - offset_y);
-	gfx.printf("%04d\r\n", date.year);
-	gfx.printf("%02d/%02d\r\n", date.mon, date.day);
-	gfx.println(weekdayToString(date.week));
-	gfx.clearClipRect();
+	M5.Display.setTextSize(FONT_SIZE_LARGE);
+	M5.Display.setCursor(0, offset_y);
+	M5.Display.setClipRect(x, offset_y, M5PAPER_SIZE_LONG_SIDE - offset_x - x,
+						   M5PAPER_SIZE_SHORT_SIDE - offset_y);
+	M5.Display.printf("%04d\r\n", rtc_dt.date.year);
+	M5.Display.printf("%02d/%02d\r\n", rtc_dt.date.month, rtc_dt.date.date);
+	M5.Display.println(weekdayToString(rtc_dt.date.weekDay));
+	M5.Display.clearClipRect();
 
 	constexpr float offset_y_info = 0.75 * M5PAPER_SIZE_SHORT_SIDE;
-	gfx.setCursor(0, offset_y_info);
-	gfx.setTextSize(FONT_SIZE_SMALL);
-	gfx.setClipRect(x, offset_y_info, M5PAPER_SIZE_LONG_SIDE - x, gfx.height() - offset_y_info);
+	M5.Display.setCursor(0, offset_y_info);
+	M5.Display.setTextSize(FONT_SIZE_SMALL);
+	M5.Display.setClipRect(x, offset_y_info, M5PAPER_SIZE_LONG_SIDE - x,
+						   M5.Display.height() - offset_y_info);
 
-	gfx.print("WiFi: ");
-	gfx.println(did_update_wifi ? "UPDATED" : "SLEEP");
-	gfx.printf("BAT : %04dmv\r\n", vol);
+	M5.Display.print("WiFi: ");
+	M5.Display.println(did_update_wifi ? "UPDATED" : "SLEEP");
+	M5.Display.printf("BAT : %04dmv\r\n", vol);
 
-	gfx.print("NTP : ");
+	M5.Display.print("NTP : ");
 	if (rtc_ntp_year == 1970) {
-		gfx.print("YET");
+		M5.Display.print("YET");
 	} else {
-		gfx.printf("%02d/%02d %02d:%02d", rtc_ntp_mon, rtc_ntp_day, rtc_ntp_hour, rtc_ntp_min);
+		M5.Display.printf("%02d/%02d %02d:%02d", rtc_ntp_mon, rtc_ntp_day, rtc_ntp_hour,
+						  rtc_ntp_min);
 	}
-	gfx.clearClipRect();
-	gfx.endWrite();
+	M5.Display.clearClipRect();
+	M5.Display.endWrite();
 
-	// 描画が完全に終わるのを待機
-	gfx.waitDisplay();
+	M5.Display.waitDisplay();
 	delay(100);
 	Serial.println("Going to sleep now");
 
 	Serial.flush();
-	M5.disableEPDPower();
-	M5.disableEXTPower();
+
+	M5.Power.setExtOutput(false);
 
 	esp_sleep_enable_timer_wakeup(SLEEP_SEC * 1000000ULL);
-	// esp_sleep_enable_ext0_wakeup(GPIO_NUM_36, 0);
 	esp_sleep_enable_ext0_wakeup(GPIO_NUM_37, 0);
-	// esp_sleep_enable_ext0_wakeup(GPIO_NUM_38, 0);
-	// esp_sleep_enable_ext0_wakeup(GPIO_NUM_39, 0);
 
 	gpio_hold_en(GPIO_NUM_2);
 	gpio_deep_sleep_hold_en();

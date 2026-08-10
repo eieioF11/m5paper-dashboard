@@ -1,5 +1,5 @@
 #pragma once
-#include <M5EPD.h>
+// #include <M5EPD.h>
 // #include <FastLED.h>
 #include <HTTPClient.h>
 
@@ -99,11 +99,11 @@ weather_t get_weather(void) {
 	return weather_data;
 }
 
-inline void prettyEpdRefresh(LGFX& gfx) {
-	gfx.setEpdMode(epd_mode_t::epd_quality);
-	gfx.fillScreen(TFT_WHITE);
-	gfx.setEpdMode(epd_mode_t::epd_fast);
-}
+// inline void prettyEpdRefresh(LGFX& gfx) {
+// 	gfx.setEpdMode(epd_mode_t::epd_quality);
+// 	gfx.fillScreen(TFT_WHITE);
+// 	gfx.setEpdMode(epd_mode_t::epd_fast);
+// }
 
 int syncNTPTime(std::function<void(const tm&)> datetimeSetter, const char* tz, const char* server1,
 				const char* server2 = nullptr, const char* server3 = nullptr) {
