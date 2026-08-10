@@ -153,10 +153,17 @@ void setup(void) {
 	gfx.setRotation(1);
 	gfx.setFont(&myFont::myFont);
 	SPIFFS.begin();
-
 	sht30.begin(21, 22, 400000);
 
 	esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
+
+	gfx.startWrite();
+	gfx.fillScreen(TFT_WHITE);
+	uint32_t vol = std::min(std::max(M5.getBatteryVoltage(), bt_low), bt_high);
+	uint32_t bt_per = get_battery_percentage(vol);
+	drawBattery(gfx, bt_per);
+	gfx.endWrite();
+	gfx.waitDisplay();
 
 	// 初回起動時処理
 	if (wakeup_reason != ESP_SLEEP_WAKEUP_TIMER) {
@@ -248,8 +255,8 @@ void setup(void) {
 
 	gfx.clearClipRect();
 
-	uint32_t vol = std::min(std::max(M5.getBatteryVoltage(), bt_low), bt_high);
-	uint32_t bt_per = get_battery_percentage(vol);
+	vol = std::min(std::max(M5.getBatteryVoltage(), bt_low), bt_high);
+	bt_per = get_battery_percentage(vol);
 	drawBattery(gfx, bt_per);
 
 	constexpr float x = 0.61 * M5PAPER_SIZE_LONG_SIDE;
@@ -296,7 +303,7 @@ void setup(void) {
 	// esp_sleep_enable_ext0_wakeup(GPIO_NUM_39, 0);
 
 	gpio_hold_en(GPIO_NUM_2);
-  gpio_deep_sleep_hold_en();
+	gpio_deep_sleep_hold_en();
 
 	esp_deep_sleep_start();
 }
