@@ -9,7 +9,7 @@
 #include "esp_sntp.h"
 
 inline String WiFiConnectedToString(void) {
-	return WiFi.isConnected() ? String("OK") : String("NG");
+	return WiFi.isConnected() ? String("CONNECTED") : String("SLEEP");
 }
 
 String weekdayToString(const int8_t weekDay) {
