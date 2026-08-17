@@ -28,12 +28,13 @@ constexpr float FONT_SIZE_SMALL = 1.0;
 constexpr uint_fast16_t M5PAPER_SIZE_LONG_SIDE = 960;
 constexpr uint_fast16_t M5PAPER_SIZE_SHORT_SIDE = 540;
 constexpr uint_fast8_t BATTERY_LOW_THRESHOLD = 20;
+constexpr std::array<uint8_t, 3> UPDATE_HOURS = {6, 12, 18};
+constexpr uint_fast16_t SLEEP_SEC = 60;
 
 rtc_time_t time_ntp;
 rtc_time_t latest_update_time;
 rtc_date_t date_ntp{4, 1, 1, 1970};
 
-SemaphoreHandle_t xMutex = nullptr;
 SHT3X::SHT3X sht30;
 static LGFX gfx;
 weather_t weather_data;
@@ -59,78 +60,6 @@ inline int syncNTPTimeJP(void) {
 	};
 
 	return syncNTPTime(datetime_setter, TIME_ZONE, NTP_SERVER1, NTP_SERVER2, NTP_SERVER3);
-}
-
-void handleBtnPPress(void) {
-	xSemaphoreTake(xMutex, portMAX_DELAY);
-	prettyEpdRefresh(gfx);
-	gfx.setTextSize(FONT_SIZE_SMALL);
-
-	gfx.startWrite();
-	gfx.setCursor(0, 0);
-	if (!syncNTPTimeJP()) {
-		gfx.println("Succeeded to sync time");
-		struct tm timeInfo;
-		if (getLocalTime(&timeInfo)) {
-			gfx.print("getLocalTime:");
-			gfx.println(&timeInfo, "%Y/%m/%d %H:%M:%S");
-		}
-	} else {
-		gfx.println("Failed to sync time");
-	}
-
-	rtc_date_t date;
-	rtc_time_t time;
-
-	// Get RTC
-	// M5.RTC.getDateTime(date, time);
-	M5.RTC.getTime(&time);
-	M5.RTC.getDate(&date);
-
-	gfx.print("RTC         :");
-	gfx.printf("%04d/%02d/%02d ", date.year, date.mon, date.day);
-	gfx.printf("%02d:%02d:%02d", time.hour, time.min, time.sec);
-	gfx.endWrite();
-
-	delay(1000);
-
-	gfx.setTextSize(FONT_SIZE_LARGE);
-	xSemaphoreGive(xMutex);
-}
-
-inline void handleBtnRPress(void) {
-	xSemaphoreTake(xMutex, portMAX_DELAY);
-	prettyEpdRefresh(gfx);
-	xSemaphoreGive(xMutex);
-}
-
-void handleBtnLPress(void) {
-	xSemaphoreTake(xMutex, portMAX_DELAY);
-	prettyEpdRefresh(gfx);
-	gfx.setCursor(0, 0);
-	gfx.setTextSize(FONT_SIZE_SMALL);
-	gfx.print("Good bye..");
-	gfx.waitDisplay();
-	M5.disableEPDPower();
-	M5.disableEXTPower();
-	M5.disableMainPower();
-	esp_deep_sleep_start();
-	while (true);
-	xSemaphoreGive(xMutex);
-}
-
-void handleButton(void* pvParameters) {
-	while (true) {
-		delay(500);
-		M5.update();
-		if (M5.BtnP.isPressed()) {
-			handleBtnPPress();
-		} else if (M5.BtnR.isPressed()) {
-			handleBtnRPress();
-		} else if (M5.BtnL.isPressed()) {
-			handleBtnLPress();
-		}
-	}
 }
 
 void wifi_connecting(void) {
@@ -171,49 +100,11 @@ void setup(void) {
 		delay(WAIT_ON_FAILURE);
 	}
 
-	// ArduinoOTA
-	// 	.onStart([]() {
-	// 		String type;
-	// 		if (ArduinoOTA.getCommand() == U_FLASH)
-	// 			type = "sketch";
-	// 		else  // U_SPIFFS
-	// 			type = "filesystem";
-
-	// 		// NOTE: if updating SPIFFS this would be the place to unmount SPIFFS using SPIFFS.end()
-	// 		Serial.println("Start updating " + type);
-	// 	})
-	// 	.onEnd([]() { Serial.println("\nEnd"); })
-	// 	.onProgress([](unsigned int progress, unsigned int total) {
-	// 		Serial.printf("Progress: %u%%\r", (progress / (total / 100)));
-	// 	})
-	// 	.onError([](ota_error_t error) {
-	// 		Serial.printf("Error[%u]: ", error);
-	// 		if (error == OTA_AUTH_ERROR)
-	// 			Serial.println("Auth Failed");
-	// 		else if (error == OTA_BEGIN_ERROR)
-	// 			Serial.println("Begin Failed");
-	// 		else if (error == OTA_CONNECT_ERROR)
-	// 			Serial.println("Connect Failed");
-	// 		else if (error == OTA_RECEIVE_ERROR)
-	// 			Serial.println("Receive Failed");
-	// 		else if (error == OTA_END_ERROR)
-	// 			Serial.println("End Failed");
-	// 	});
-
-	// ArduinoOTA.begin();
-
 	// env2 unit
 	if (!sht30.begin(21, 22, 400000)) {
 		gfx.println("Failed to initialize external I2C");
 	}
 
-	xMutex = xSemaphoreCreateMutex();
-	if (xMutex != nullptr) {
-		xSemaphoreGive(xMutex);
-		xTaskCreatePinnedToCore(handleButton, "handleButton", 4096, nullptr, 1, nullptr, 1);
-	} else {
-		gfx.println("Failed to create a task for buttons");
-	}
 	gfx.println("Init done");
 	delay(1000);
 	gfx.setTextSize(FONT_SIZE_LARGE);
@@ -301,14 +192,8 @@ void drawBattery(LGFX& gfx, int percentage) {
 }
 
 void loop(void) {
-	constexpr uint_fast16_t SLEEP_SEC = 60;
-	constexpr uint_fast32_t TIME_SYNC_CYCLE = 3600 * 24 / SLEEP_SEC;
-	constexpr uint_fast32_t UPDATE_SYNC_CYCLE = 3600 * 12 / SLEEP_SEC;
-	// constexpr uint_fast32_t UPDATE_SYNC_CYCLE = 3600 * 1 / SLEEP_SEC;
-	static uint32_t update_cnt = 0;
-	static uint32_t cnt = 0;
-	bool update = false;
-	update_cnt++;
+	String wifi_status = "WiFi: ";
+
 	uint32_t vol = std::min(std::max(M5.getBatteryVoltage(), bt_low), bt_high);
 	uint32_t bt_per = get_battery_percentage(vol);
 	float tmp = 0.0;
@@ -320,116 +205,96 @@ void loop(void) {
 
 	rtc_date_t date;
 	rtc_time_t time;
-	// M5.RTC.getDateTime(date, time);
 	M5.RTC.getTime(&time);
 	M5.RTC.getDate(&date);
 
 	M5.EPD.Active();
 	if (bt_per < BATTERY_LOW_THRESHOLD) {
 		WiFi.mode(WIFI_OFF);
-		gfx.startWrite();
-		gfx.fillScreen(TFT_WHITE);
-		gfx.setCursor(0, 0);
-		gfx.setTextSize(FONT_SIZE_LARGE);
-		gfx.println("Battery is low");
-		gfx.printf("%04d %02d/%02d %02d:%02d\r\n",date.year, date.mon, date.day, time.hour, time.min);
-		gfx.setTextSize(FONT_SIZE_MIDDLE);
-		gfx.printf("Voltage: %04dmv\r\n", vol);
-		gfx.printf("%02d%% %02.1f℃\r\n", hum, tmp);
-		drawBattery(gfx, bt_per);
-		gfx.endWrite();
+		wifi_status += "Battery Low";
 	} else {
-		if (update_cnt >= UPDATE_SYNC_CYCLE) {
+		if (std::find(UPDATE_HOURS.begin(), UPDATE_HOURS.end(), time.hour) != UPDATE_HOURS.end() &&
+			latest_update_time.hour !=
+				time.hour) {  // 時刻が更新時間帯で、かつ最新更新時刻が同じ時間帯でない場合
 			wifi_connecting();
-			gfx.clear();
 			weather_t weather = get_weather();
 			if (weather.success) weather_data = weather;
-			update_cnt = 0;
-			update = true;
-		}
-
-		xSemaphoreTake(xMutex, portMAX_DELAY);
-
-		gfx.startWrite();
-		gfx.fillScreen(TFT_WHITE);
-		gfx.fillRect(0.57 * M5PAPER_SIZE_LONG_SIDE, 0, 3, M5PAPER_SIZE_SHORT_SIDE, TFT_BLACK);
-
-		constexpr uint_fast16_t offset_y = 30;
-		constexpr uint_fast16_t offset_x = 45;
-
-		gfx.setCursor(0, offset_y);
-		gfx.setTextSize(FONT_SIZE_GIANT);
-		gfx.setClipRect(offset_x, offset_y, M5PAPER_SIZE_LONG_SIDE - offset_x,
-						M5PAPER_SIZE_SHORT_SIDE - offset_y);
-
-		gfx.printf("%02d:%02d\r\n", time.hour, time.min);
-		gfx.setTextSize(FONT_SIZE_MIDDLE);
-		gfx.setCursor(0, offset_y + 195);
-		gfx.printf("    %s\r\n", weather_data.weather.c_str());
-		gfx.printf("    %02.1f℃\r\n", weather_data.temperature);
-		gfx.setTextSize(FONT_SIZE_SMALL);
-		gfx.printf("\r\n");
-		gfx.drawPngFile(SPIFFS, "/weather_icons/" + weather_data.icon + "@2x.png", 20,
-						offset_y + 180, 0, 0, 0, 0, 2.0, 2.0);
-		gfx.setTextSize(FONT_SIZE_MIDDLE);
-		gfx.printf("%02d%% %02.1f℃\r\n", hum, tmp);
-		gfx.setTextSize(FONT_SIZE_SMALL);
-		gfx.printf("latest update : %02d:%02d\r\n", latest_update_time.hour,
-				   latest_update_time.min);
-		gfx.setTextSize(FONT_SIZE_LARGE);
-		gfx.clearClipRect();
-
-		drawBattery(gfx, bt_per);
-
-		constexpr float x = 0.61 * M5PAPER_SIZE_LONG_SIDE;
-		gfx.setTextSize(FONT_SIZE_LARGE);
-		gfx.setCursor(0, offset_y);
-		gfx.setClipRect(x, offset_y, M5PAPER_SIZE_LONG_SIDE - offset_x - x,
-						M5PAPER_SIZE_SHORT_SIDE - offset_y);
-		gfx.printf("%04d\r\n", date.year);
-		gfx.printf("%02d/%02d\r\n", date.mon, date.day);
-		gfx.println(weekdayToString(date.week));
-		gfx.clearClipRect();
-
-		constexpr float offset_y_info = 0.75 * M5PAPER_SIZE_SHORT_SIDE;
-		gfx.setCursor(0, offset_y_info);
-		gfx.setTextSize(FONT_SIZE_SMALL);
-		gfx.setClipRect(x, offset_y_info, M5PAPER_SIZE_LONG_SIDE - x, gfx.height() - offset_y_info);
-		gfx.print("WiFi: ");
-		gfx.println(WiFiConnectedToString());
-
-		gfx.printf("BAT : %04dmv\r\n", vol);
-		// gfx.printf("BAT : %04dmv %03d%%\r\n", vol, bt_per);
-		gfx.print("NTP : ");
-		if (date_ntp.year == 1970) {
-			gfx.print("YET");  // not initialized
-		} else {
-			gfx.printf("%02d/%02d %02d:%02d", date_ntp.mon, date_ntp.day, time_ntp.hour,
-					   time_ntp.min);
-		}
-		gfx.clearClipRect();
-		gfx.setTextSize(FONT_SIZE_LARGE);
-		gfx.endWrite();
-		cnt++;
-		if (cnt == TIME_SYNC_CYCLE) {
-			wifi_connecting();
-			syncNTPTimeJP();
-			cnt = 0;
-			update = true;
-		}
-		if (update) {
+			if (time.hour==UPDATE_HOURS[0]) {
+				gfx.clear();
+				prettyEpdRefresh(gfx);
+				syncNTPTimeJP();
+			}
 			latest_update_time = time;
+		}
+		wifi_status += WiFiConnectedToString();
+		if (WiFi.isConnected()) {
 			delay(1000);
 			WiFi.mode(WIFI_OFF);
 		}
-		xSemaphoreGive(xMutex);
 	}
+	gfx.startWrite();
+	gfx.fillScreen(TFT_WHITE);
+	gfx.fillRect(0.57 * M5PAPER_SIZE_LONG_SIDE, 0, 3, M5PAPER_SIZE_SHORT_SIDE, TFT_BLACK);
 
-	// delay(SLEEP_SEC * 1000);
+	constexpr uint_fast16_t offset_y = 30;
+	constexpr uint_fast16_t offset_x = 45;
+
+	gfx.setCursor(0, offset_y);
+	gfx.setTextSize(FONT_SIZE_GIANT);
+	gfx.setClipRect(offset_x, offset_y, M5PAPER_SIZE_LONG_SIDE - offset_x,
+					M5PAPER_SIZE_SHORT_SIDE - offset_y);
+
+	gfx.printf("%02d:%02d\r\n", time.hour, time.min);
+	gfx.setTextSize(FONT_SIZE_MIDDLE);
+	gfx.setCursor(0, offset_y + 195);
+	gfx.printf("    %s\r\n", weather_data.weather.c_str());
+	gfx.printf("    %02.1f℃\r\n", weather_data.temperature);
+	gfx.setTextSize(FONT_SIZE_SMALL);
+	gfx.printf("\r\n");
+	gfx.drawPngFile(SPIFFS, "/weather_icons/" + weather_data.icon + "@2x.png", 20, offset_y + 180,
+					0, 0, 0, 0, 2.0, 2.0);
+	gfx.setTextSize(FONT_SIZE_MIDDLE);
+	gfx.printf("%02d%% %02.1f℃\r\n", hum, tmp);
+	gfx.setTextSize(FONT_SIZE_SMALL);
+	gfx.printf("latest update : %02d:%02d\r\n", latest_update_time.hour, latest_update_time.min);
+	gfx.setTextSize(FONT_SIZE_LARGE);
+	gfx.clearClipRect();
+
+	drawBattery(gfx, bt_per);
+
+	constexpr float x = 0.61 * M5PAPER_SIZE_LONG_SIDE;
+	gfx.setTextSize(FONT_SIZE_LARGE);
+	gfx.setCursor(0, offset_y);
+	gfx.setClipRect(x, offset_y, M5PAPER_SIZE_LONG_SIDE - offset_x - x,
+					M5PAPER_SIZE_SHORT_SIDE - offset_y);
+	gfx.printf("%04d\r\n", date.year);
+	gfx.printf("%02d/%02d\r\n", date.mon, date.day);
+	gfx.println(weekdayToString(date.week));
+	gfx.clearClipRect();
+
+	constexpr float offset_y_info = 0.75 * M5PAPER_SIZE_SHORT_SIDE;
+	gfx.setCursor(0, offset_y_info);
+	gfx.setTextSize(FONT_SIZE_SMALL);
+	gfx.setClipRect(x, offset_y_info, M5PAPER_SIZE_LONG_SIDE - x, gfx.height() - offset_y_info);
+	gfx.println(wifi_status);
+
+	gfx.printf("BAT : %04dmv\r\n", vol);
+	// gfx.printf("BAT : %04dmv %03d%%\r\n", vol, bt_per);
+	gfx.print("NTP : ");
+	if (date_ntp.year == 1970) {
+		gfx.print("YET");  // not initialized
+	} else {
+		gfx.printf("%02d/%02d %02d:%02d", date_ntp.mon, date_ntp.day, time_ntp.hour, time_ntp.min);
+	}
+	gfx.clearClipRect();
+	gfx.setTextSize(FONT_SIZE_LARGE);
+	gfx.endWrite();
+
 	M5.EPD.Sleep();
 	Serial.flush();	 // Serialをflushさせておく
 	esp_sleep_enable_timer_wakeup(SLEEP_SEC * 1000000);
 	// esp_sleep_enable_ext0_wakeup(GPIO_NUM_36, LOW);
+	esp_sleep_enable_ext0_wakeup(GPIO_NUM_37, LOW);
 	// タッチパネルの割り込みピンを指定して、LOWで起きるように設定
 	esp_light_sleep_start();  // ライトスリープ開始
 }
